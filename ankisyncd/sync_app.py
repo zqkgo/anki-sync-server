@@ -110,10 +110,18 @@ class SyncCollectionHandler(anki.sync.Syncer):
 
     # ankidesktop >=2.1rc2 sends graves in applyGraves, but still expects
     # server-side deletions to be returned by start
+    # 1. 获取被其他客户端删除的对象
+    # 2. 删除当前客户端删除的对象s
     def start(self, minUsn, lnewer, graves={"cards": [], "notes": [], "decks": []}, offset=None):
         if offset is not None:
             raise NotImplementedError('You are using the experimental V2 scheduler, which is not supported by the server.')
+        # minUsn - 客户端usn
+        # maxUsn - 服务端us
+        # minUsn <= maxUsn
         self.maxUsn = self.col._usn
+        print("▶ 开始执行start方法，maxUsn: {}, minUsn: {}, lnewer: {}, graves: {}".format(self.maxUsn, minUsn, lnewer, graves))
+        # 客户端入参minUsn，来自最近一次调用服务端/sync/meta接口返回的meta[usn]
+        # 这个值不可能大于服务端usn，因为有可能其他客户端已经同步过数据，即增加过maxUsn
         self.minUsn = minUsn
         self.lnewer = not lnewer
         lgraves = self.removed()
