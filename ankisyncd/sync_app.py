@@ -140,6 +140,7 @@ class SyncCollectionHandler(anki.sync.Syncer):
 
     def sanityCheck2(self, client):
         server = self.sanityCheck()
+        print("client: {}, server: {}".format(client, server))
         if client != server:
             return dict(status="bad", c=client, s=server)
         return dict(status="ok")
@@ -234,7 +235,6 @@ class SyncMediaHandler:
 
         # Get meta info first.
         meta = json.loads(zip_file.read("_meta").decode())
-
         # Remove media files that were removed on the client.
         media_to_remove = []
         for normname, ordinal in meta:
@@ -501,11 +501,20 @@ class SyncApp:
 
     @wsgify
     def __call__(self, req):
+        print("🌟 Request path: {}".format(req.path))
         # Get and verify the session
         try:
             hkey = req.POST['k']
         except KeyError:
             hkey = None
+
+        if hkey is None:
+            try:
+                hkey = req.GET['k']
+                print(req.GET)
+            except KeyError:
+                hkey = None
+
 
         session = self.session_manager.load(hkey, self.create_session)
 
@@ -526,6 +535,8 @@ class SyncApp:
             data = self._decode_data(data, compression)
         except KeyError:
             data = {}
+
+        print("POST file data: {}".format(data))
 
         if req.path.startswith(self.base_url):
             url = req.path[len(self.base_url):]
