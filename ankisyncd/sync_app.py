@@ -593,6 +593,7 @@ class SyncApp:
                 return result
 
             elif url == 'download':
+                # CollectionWrapper对象
                 thread = session.get_thread()
                 if url in self.prehooks:
                     thread.execute(self.prehooks[url], [session])

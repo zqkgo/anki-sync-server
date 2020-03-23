@@ -4,6 +4,7 @@ import os
 from sqlite3 import dbapi2 as sqlite
 
 import anki.db
+from  ankisyncd.collection import CollectionWrapper
 
 class FullSyncManager:
     def upload(self, col, data, session):
@@ -24,22 +25,23 @@ class FullSyncManager:
 
         # Overwrite existing db.
         col.close()
-        try:
-            os.replace(temp_db_path, session.get_collection_path())
-        finally:
-            col.reopen()
-            col.load()
-
+        # try:
+        #     os.replace(temp_db_path, session.get_collection_path())
+        # finally:
+        #     col.reopen()
+        #     col.load()
+        os.replace(temp_db_path, session.get_collection_path())
         return "OK"
 
 
     def download(self, col, session):
-        col.close()
-        try:
-            data = open(session.get_collection_path(), 'rb').read()
-        finally:
-            col.reopen()
-            col.load()
+        # col.close()
+        # try:
+        #     data = open(session.get_collection_path(), 'rb').read()
+        # finally:
+        #     col.open()
+        #     col.load()
+        data = open(session.get_collection_path(), 'rb').read()
         return data
 
 

@@ -44,7 +44,10 @@ class CollectionWrapper:
         self.open()
         args = [self.__col] + args
         ret = func(*args, **kw)
-
+        # 上传后需要重新打开，重置col的内存数据
+        if func.__name__ == "operation_upload":
+            self.__col = None
+            self.open()
         # Only return the value if they requested it, so the interface remains
         # identical between this class and ThreadingCollectionWrapper
         if waitForReturn:
