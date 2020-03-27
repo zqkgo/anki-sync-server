@@ -237,14 +237,17 @@ class SyncMediaHandler:
         meta = json.loads(zip_file.read("_meta").decode())
         # Remove media files that were removed on the client.
         media_to_remove = []
+        print("被删除的文件保存在meta中，meta:{}".format(meta))
         for normname, ordinal in meta:
-            if ordinal == '':
+            print("meta数据，normname: {}, ordinal: {}".format(normname, ordinal))
+            if ordinal == None:
                 media_to_remove.append(self._normalize_filename(normname))
 
         # Add media files that were added on the client.
         media_to_add = []
         usn = self.col.media.lastUsn()
         oldUsn = usn
+        print("zip_file.infolist() ----> {}".format(zip_file.infolist()))
         for i in zip_file.infolist():
             if i.filename == "_meta":  # Ignore previously retrieved metadata.
                 continue
@@ -264,7 +267,7 @@ class SyncMediaHandler:
         # We count all files we are to remove, even if we don't have them in
         # our media directory and our db doesn't know about them.
         processed_count = len(media_to_remove) + len(media_to_add)
-
+        print("len(meta): {}, processed_count: {}".format(len(meta), processed_count))
         assert len(meta) == processed_count  # sanity check
 
         if media_to_remove:
