@@ -240,7 +240,7 @@ class SyncMediaHandler:
         print("被删除的文件保存在meta中，meta:{}".format(meta))
         for normname, ordinal in meta:
             print("meta数据，normname: {}, ordinal: {}".format(normname, ordinal))
-            if ordinal == None:
+            if ordinal == None or ordinal == "":
                 media_to_remove.append(self._normalize_filename(normname))
 
         # Add media files that were added on the client.
