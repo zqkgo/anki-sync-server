@@ -5,6 +5,7 @@ from os.path import dirname, realpath
 
 logger = logging.getLogger("ankisyncd")
 
+# 配置文件可能存在的路径
 paths = [
     "/etc/ankisyncd/ankisyncd.conf",
     os.environ.get("XDG_CONFIG_HOME") and
@@ -17,6 +18,7 @@ paths = [
 # to the uppercase form of the key. E.g, `ANKISYNCD_SESSION_MANAGER` to set
 # `session_manager`
 def load_from_env(conf):
+    print("config.py.load_from_env() 从环境变量中加载配置")
     logger.debug("Loading/overriding config values from ENV")
     for env in os.environ:
         if env.startswith('ANKISYNCD_'):
@@ -25,12 +27,13 @@ def load_from_env(conf):
             logger.info("Setting {} from ENV".format(config_key))
 
 def load(path=None):
+    print("config.py.load() 加载配置")
     choices = paths
     parser = configparser.ConfigParser()
     if path:
         choices = [path]
     for path in choices:
-        logger.debug("config.location: trying", path)
+        logger.debug("config.location: trying {}".format(path))
         try:
             parser.read(path)
             conf = parser['sync_app']

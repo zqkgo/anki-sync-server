@@ -14,35 +14,32 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import gzip
-import hashlib
-import io
+import sys
 import json
+import hashlib
+import re
+import gzip
+import io
 import logging
 import os
 import random
-import re
-import string
-import sys
 import time
 import unicodedata
 import zipfile
-from configparser import ConfigParser
-from sqlite3 import dbapi2 as sqlite
 
 from webob import Response
-from webob.dec import wsgify
-from webob.exc import *
 
 import anki.db
 import anki.sync
 import anki.utils
-from anki.consts import SYNC_VER, SYNC_ZIP_SIZE, SYNC_ZIP_COUNT
 from anki.consts import REM_CARD, REM_NOTE
+from anki.consts import SYNC_VER, SYNC_ZIP_SIZE, SYNC_ZIP_COUNT
+from webob.dec import wsgify
+from webob.exc import *
 
-from ankisyncd.users import get_user_manager
-from ankisyncd.sessions import get_session_manager
 from ankisyncd.full_sync import get_full_sync_manager
+from ankisyncd.sessions import get_session_manager
+from ankisyncd.users import get_user_manager
 
 logger = logging.getLogger("ankisyncd")
 
@@ -113,8 +110,8 @@ class SyncCollectionHandler(anki.sync.Syncer):
     # 1. 获取被其他客户端删除的对象
     # 2. 删除当前客户端删除的对象s
     def start(self, minUsn, lnewer, graves={"cards": [], "notes": [], "decks": []}, offset=None):
-        if offset is not None:
-            raise NotImplementedError('You are using the experimental V2 scheduler, which is not supported by the server.')
+        # if offset is not None:
+        #     raise NotImplementedError('You are using the experimental V2 scheduler, which is not supported by the server.')
         # minUsn - 客户端usn
         # maxUsn - 服务端us
         # minUsn <= maxUsn
@@ -333,7 +330,7 @@ class SyncMediaHandler:
         result = []
         server_lastUsn = self.col.media.lastUsn()
         fname = csum = None
-
+        print("server last usn: {}, client usn: {}".format(server_lastUsn, lastUsn))
         if lastUsn < server_lastUsn or lastUsn == 0:
             for fname,usn,csum, in self.col.media.db.execute("select fname,usn,csum from media order by usn desc limit ?", server_lastUsn - lastUsn):
                 result.append([fname, usn, csum])
@@ -351,6 +348,7 @@ class SyncMediaHandler:
             result = "FAILED"
 
         return {'data': result, 'err': ''}
+
 
 class SyncUserSession:
     def __init__(self, name, path, collection_manager, setup_new_collection=None):
@@ -370,12 +368,14 @@ class SyncUserSession:
             os.mkdir(path)
 
     def _generate_session_key(self):
+        print("SyncUserSession._generate_session_key() 生成随机的session key")
         return anki.utils.checksum(str(random.random()))[:8]
 
     def get_collection_path(self):
         return os.path.realpath(os.path.join(self.path, 'collection.anki2'))
 
     def get_thread(self):
+        print("SyncUserSession.get_thread() 获取线程")
         return self.collection_manager.get_collection(self.get_collection_path(), self.setup_new_collection)
 
     def get_handler_for_operation(self, operation, col):
@@ -455,16 +455,21 @@ class SyncApp:
     def generateHostKey(self, username):
         """Generates a new host key to be used by the given username to identify their session.
         This values is random."""
-
-        import hashlib, time, random, string
+        print("SyncApp.generateHostKey() 根据用户名生成唯一标识session的随机数")
+        import hashlib
+        import time
+        import random
+        import string
         chars = string.ascii_letters + string.digits
         val = ':'.join([username, str(int(time.time())), ''.join(random.choice(chars) for x in range(8))]).encode()
         return hashlib.md5(val).hexdigest()
 
     def create_session(self, username, user_path):
+        print("SyncApp.create_session() 创建session")
         return SyncUserSession(username, user_path, self.collection_manager, self.setup_new_collection)
 
     def _decode_data(self, data, compression=0):
+        print("SyncApp._decode_data() 解码数据")
         if compression:
             with gzip.GzipFile(mode="rb", fileobj=io.BytesIO(data)) as gz:
                 data = gz.read()
@@ -479,11 +484,9 @@ class SyncApp:
     def operation_hostKey(self, username, password):
         if not self.user_manager.authenticate(username, password):
             return
-
         dirname = self.user_manager.userdir(username)
         if dirname is None:
             return
-
         hkey = self.generateHostKey(username)
         user_path = os.path.join(self.data_root, dirname)
         session = self.create_session(username, user_path)
@@ -504,48 +507,39 @@ class SyncApp:
 
     @wsgify
     def __call__(self, req):
-        print("🌟 Request path: {}".format(req.path))
+        print("SyncApp.__call__() 处理HTTP请求 url: {}".format(req.path))
         # Get and verify the session
         try:
             hkey = req.POST['k']
         except KeyError:
             hkey = None
-
         if hkey is None:
             try:
                 hkey = req.GET['k']
-                print(req.GET)
             except KeyError:
                 hkey = None
-
-
         session = self.session_manager.load(hkey, self.create_session)
-
         if session is None:
             try:
                 skey = req.POST['sk']
                 session = self.session_manager.load_from_skey(skey, self.create_session)
             except KeyError:
                 skey = None
-
+        # 解码数据
         try:
             compression = int(req.POST['c'])
         except KeyError:
             compression = 0
-
         try:
             data = req.POST['data'].file.read()
             data = self._decode_data(data, compression)
         except KeyError:
             data = {}
-
-        print("POST file data: {}".format(data))
-
+        # 非媒体数据同步请求
         if req.path.startswith(self.base_url):
             url = req.path[len(self.base_url):]
             if url not in self.valid_urls:
                 raise HTTPNotFound()
-
             if url == 'hostKey':
                 result = self.operation_hostKey(data.get("u"), data.get("p"))
                 if result:
@@ -553,39 +547,29 @@ class SyncApp:
                 else:
                     # TODO: do I have to pass 'null' for the client to receive None?
                     raise HTTPForbidden('null')
-
             if session is None:
                 raise HTTPForbidden()
-
             if url in SyncCollectionHandler.operations + SyncMediaHandler.operations:
                 # 'meta' passes the SYNC_VER but it isn't used in the handler
                 if url == 'meta':
-                    if session.skey == None and 's' in req.POST:
+                    if session.skey is None and 's' in req.POST:
                         session.skey = req.POST['s']
                     if 'v' in data:
                         session.version = data['v']
                     if 'cv' in data:
                         session.client_version = data['cv']
-
                     self.session_manager.save(hkey, session)
                     session = self.session_manager.load(hkey, self.create_session)
-
                 thread = session.get_thread()
-
                 if url in self.prehooks:
                     thread.execute(self.prehooks[url], [session])
-
                 result = self._execute_handler_method_in_thread(url, data, session)
-
                 # If it's a complex data type, we convert it to JSON
                 if type(result) not in (str, bytes, Response):
                     result = json.dumps(result)
-
                 if url in self.posthooks:
                     thread.execute(self.posthooks[url], [session])
-
                 return result
-
             elif url == 'upload':
                 thread = session.get_thread()
                 if url in self.prehooks:
@@ -607,29 +591,21 @@ class SyncApp:
 
             # This was one of our operations but it didn't get handled... Oops!
             raise HTTPInternalServerError()
-
-        # media sync
+        # 媒体数据同步请求
         elif req.path.startswith(self.base_media_url):
             if session is None:
                 raise HTTPForbidden()
-
             url = req.path[len(self.base_media_url):]
-
             if url not in self.valid_urls:
                 raise HTTPNotFound()
-
             if url == "begin":
                 data['skey'] = session.skey
-
             result = self._execute_handler_method_in_thread(url, data, session)
-
             # If it's a complex data type, we convert it to JSON
             if type(result) not in (str, bytes):
                 result = json.dumps(result)
-
             return result
-
-        return "Anki Sync Server"
+        return ""
 
     @staticmethod
     def _execute_handler_method_in_thread(method_name, keyword_args, session):
@@ -638,6 +614,8 @@ class SyncApp:
         thread for session. The handler method will access the collection as
         self.col.
         """
+        print("SyncApp._execute_handler_method_in_thread() 准备执行线程中的某个方法, method_mame: {}. keyword_args: {}, "
+              "session: {}".format(method_name, keyword_args, session))
 
         def run_func(col, **keyword_args):
             # Retrieve the correct handler method.
@@ -654,7 +632,7 @@ class SyncApp:
         # Send the closure to the thread for execution.
         thread = session.get_thread()
         result = thread.execute(run_func, kw=keyword_args)
-
+        print("-"*100)
         return result
 
 
@@ -662,8 +640,9 @@ def make_app(global_conf, **local_conf):
     return SyncApp(**local_conf)
 
 def main():
-    logging.basicConfig(level=logging.INFO, format="[%(asctime)s]:%(levelname)s:%(name)s:%(message)s")
+    print("sync_app.py.main() 程序入口")
     import ankisyncd
+    logging.basicConfig(level=logging.ERROR, format="[%(asctime)s]:%(levelname)s:%(name)s:%(message)s")
     logger.info("ankisyncd {} ({})".format(ankisyncd._get_version(), ankisyncd._homepage))
     from wsgiref.simple_server import make_server, WSGIRequestHandler
     from ankisyncd.thread import shutdown

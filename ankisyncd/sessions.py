@@ -21,6 +21,7 @@ class SimpleSessionManager:
                 return self.sessions[i]
 
     def save(self, hkey, session):
+        print("SimpleSessionManager.save() 保存session到内存，hkey: {}, session: {}".format(hkey, session))
         self.sessions[hkey] = session
 
     def delete(self, hkey):
@@ -52,11 +53,13 @@ class SqliteSessionManager(SimpleSessionManager):
             raise Exception("Outdated database schema, run utils/migrate_user_tables.py")
 
     def _conn(self):
+        print("SqliteSessionManager._conn() 创建sqlite连接")
         new = not os.path.exists(self.session_db_path)
         conn = sqlite.connect(self.session_db_path)
         if new:
             cursor = conn.cursor()
-            cursor.execute("CREATE TABLE session (hkey VARCHAR PRIMARY KEY, skey VARCHAR, username VARCHAR, path VARCHAR)")
+            cursor.execute(
+                "CREATE TABLE session (hkey VARCHAR PRIMARY KEY, skey VARCHAR, username VARCHAR, path VARCHAR)")
         return conn
 
     # Default to using sqlite3 syntax but overridable for sub-classes using other
@@ -66,22 +69,21 @@ class SqliteSessionManager(SimpleSessionManager):
         return sql
 
     def load(self, hkey, session_factory=None):
+        print("SqliteSessionManager.load() 根据host key加载session")
         session = SimpleSessionManager.load(self, hkey)
         if session is not None:
             return session
-
         conn = self._conn()
         cursor = conn.cursor()
-
         cursor.execute(self.fs("SELECT skey, username, path FROM session WHERE hkey=?"), (hkey,))
         res = cursor.fetchone()
-
         if res is not None:
             session = self.sessions[hkey] = session_factory(res[1], res[2])
             session.skey = res[0]
             return session
 
     def load_from_skey(self, skey, session_factory=None):
+        print("SqliteSessionManager.load_from_skey() 根据session key加载session")
         session = SimpleSessionManager.load_from_skey(self, skey)
         if session is not None:
             return session
@@ -98,14 +100,12 @@ class SqliteSessionManager(SimpleSessionManager):
             return session
 
     def save(self, hkey, session):
+        print("SqliteSessionManager.save() 保存session，hkey: {}, session: {}\n\t保存session到内存\n\t保存或更新session到数据库".format(hkey, session))
         SimpleSessionManager.save(self, hkey, session)
-
         conn = self._conn()
         cursor = conn.cursor()
-
         cursor.execute("INSERT OR REPLACE INTO session (hkey, skey, username, path) VALUES (?, ?, ?, ?)",
-            (hkey, session.skey, session.name, session.path))
-
+                       (hkey, session.skey, session.name, session.path))
         conn.commit()
 
     def delete(self, hkey):
@@ -117,7 +117,9 @@ class SqliteSessionManager(SimpleSessionManager):
         cursor.execute(self.fs("DELETE FROM session WHERE hkey=?"), (hkey,))
         conn.commit()
 
+
 def get_session_manager(config):
+    print("sessions.py.get_session_manager() 获取会话管理器")
     if "session_db_path" in config and config["session_db_path"]:
         logger.info("Found session_db_path in config, using SqliteSessionManager for auth")
         return SqliteSessionManager(config['session_db_path'])
@@ -137,5 +139,5 @@ def get_session_manager(config):
         return class_(config)
     else:
         logger.warning("Neither session_db_path nor session_manager set, "
-                     "ankisyncd will lose sessions on application restart")
+                       "ankisyncd will lose sessions on application restart")
         return SimpleSessionManager()

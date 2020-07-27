@@ -5,6 +5,7 @@ from queue import Queue
 
 import time, logging
 
+
 def short_repr(obj, logger=logging.getLogger(), maxlen=80):
     """Like repr, but shortens strings and bytestrings if logger's logging level
     is above DEBUG. Currently shallow and very limited, only implemented for
@@ -27,6 +28,7 @@ def short_repr(obj, logger=logging.getLogger(), maxlen=80):
             o[k] = shorten(o[k])
 
     return repr(o)
+
 
 class ThreadingCollectionWrapper:
     """Provides the same interface as CollectionWrapper, but it creates a new Thread to
@@ -65,14 +67,12 @@ class ThreadingCollectionWrapper:
         executed and return its return value.  If False, it will return None
         immediately and the function will be executed sometime later.
         """
-
+        print("ThreadingCollectionWrapper.execute() 将请求放入队列（同步或异步处理）")
         if waitForReturn:
             return_queue = Queue()
         else:
             return_queue = None
-
         self._queue.put((func, args, kw, return_queue))
-
         if return_queue is not None:
             ret = return_queue.get(True)
             if isinstance(ret, Exception):
@@ -80,28 +80,22 @@ class ThreadingCollectionWrapper:
             return ret
 
     def _run(self):
-        self.logger.info("Starting...")
-
+        print("ThreadingCollectionWrapper._run() 开始循环消费请求队列")
         try:
             while self._running:
                 func, args, kw, return_queue = self._queue.get(True)
-
+                print("ThreadingCollectionWrapper._run() 从请求队列中获取请求")
                 if hasattr(func, '__name__'):
                     func_name = func.__name__
                 else:
                     func_name = func.__class__.__name__
-
-                self.logger.info("Running %s(*%s, **%s)", func_name, short_repr(args, self.logger), short_repr(kw, self.logger))
                 self.last_timestamp = time.time()
-
                 try:
                     ret = self.wrapper.execute(func, args, kw, return_queue)
                 except Exception as e:
-                    self.logger.error("Unable to %s(*%s, **%s): %s",
-                        func_name, repr(args), repr(kw), e, exc_info=True)
+                    self.logger.error("Unable to %s(*%s, **%s): %s", func_name, repr(args), repr(kw), e, exc_info=True)
                     # we return the Exception which will be raise'd on the other end
                     ret = e
-
                 if return_queue is not None:
                     return_queue.put(ret)
         except Exception as e:
@@ -116,6 +110,7 @@ class ThreadingCollectionWrapper:
             self.logger.info("Stopped!")
 
     def start(self):
+        print("ThreadingCollectionWrapper.start() 启动线程")
         if not self._running:
             self._running = True
             assert self._thread is None
@@ -125,6 +120,7 @@ class ThreadingCollectionWrapper:
     def stop(self):
         def _stop(col):
             self._running = False
+
         self.execute(_stop, waitForReturn=False)
 
     def stop_and_wait(self):
@@ -146,10 +142,12 @@ class ThreadingCollectionWrapper:
 
         def _close(col):
             self.wrapper.close()
+
         self.execute(_close, waitForReturn=False)
 
     def opened(self):
         return self.wrapper.opened()
+
 
 class ThreadingCollectionManager(CollectionManager):
     """Manages a set of ThreadingCollectionWrapper objects."""
@@ -196,23 +194,27 @@ class ThreadingCollectionManager(CollectionManager):
         # let the parent do whatever else it might want to do...
         super(ThreadingCollectionManager, self).shutdown()
 
+
 #
 # For working with the global ThreadingCollectionManager:
 #
 
 collection_manager = None
 
+
 def get_collection_manager(config):
     """Return the global ThreadingCollectionManager for this process."""
+    print("thread.py.get_collection_manager() 获取collection管理器")
     global collection_manager
     if collection_manager is None:
         collection_manager = ThreadingCollectionManager(config)
     return collection_manager
 
+
 def shutdown():
     """If the global ThreadingCollectionManager exists, shut it down."""
+    print("thread.py.shutdown() 关闭服务器")
     global collection_manager
     if collection_manager is not None:
         collection_manager.shutdown()
         collection_manager = None
-

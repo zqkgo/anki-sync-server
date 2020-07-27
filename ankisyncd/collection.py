@@ -39,7 +39,7 @@ class CollectionWrapper:
         executed and return its return value.  If False, the function MAY be
         executed some time later and None will be returned.
         """
-
+        print("CollectionWrapper.execute() 执行线程方法")
         # Open the collection and execute the function
         self.open()
         args = [self.__col] + args
@@ -95,6 +95,7 @@ class CollectionWrapper:
     def opened(self):
         """Returns True if the collection is open, False otherwise."""
         return self.__col is not None
+
 
 class CollectionManager:
     """Manages a set of CollectionWrapper objects."""

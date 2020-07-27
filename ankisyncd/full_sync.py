@@ -2,9 +2,11 @@
 
 import os
 from sqlite3 import dbapi2 as sqlite
-
+import logging
 import anki.db
-from  ankisyncd.collection import CollectionWrapper
+from ankisyncd.collection import CollectionWrapper
+
+logger = logging.getLogger("ankisyncd.full_sync")
 
 class FullSyncManager:
     def upload(self, col, data, session):
@@ -33,7 +35,6 @@ class FullSyncManager:
         os.replace(temp_db_path, session.get_collection_path())
         return "OK"
 
-
     def download(self, col, session):
         # col.close()
         # try:
@@ -46,6 +47,7 @@ class FullSyncManager:
 
 
 def get_full_sync_manager(config):
+    print("full_sync.py.get_full_sync_manager() 获取完全同步管理器")
     if "full_sync_manager" in config and config["full_sync_manager"]:  # load from config
         import importlib
         import inspect
@@ -58,4 +60,5 @@ def get_full_sync_manager(config):
                             inherit from FullSyncManager''')
         return class_(config)
     else:
+        logger.info("Not found full_sync_manager in config, using FullSyncManager for full sync")
         return FullSyncManager()

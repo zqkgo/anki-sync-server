@@ -197,6 +197,7 @@ class SqliteUserManager(SimpleUserManager):
 
 
 def get_user_manager(config):
+    print("users.py.get_user_manager() 获取用户管理器")
     if "auth_db_path" in config and config["auth_db_path"]:
         logger.info("Found auth_db_path in config, using SqliteUserManager for auth")
         return SqliteUserManager(config['auth_db_path'], config['data_root'])
@@ -214,4 +215,4 @@ def get_user_manager(config):
         return class_(config)
     else:
         logger.warning("neither auth_db_path nor user_manager set, ankisyncd will accept any password")
-        return  SimpleUserManager()
+        return SimpleUserManager()
