@@ -394,6 +394,7 @@ class SyncUserSession:
         handler.col = col
         return handler
 
+
 class SyncApp:
     valid_urls = SyncCollectionHandler.operations + SyncMediaHandler.operations + ['hostKey', 'upload', 'download']
 
@@ -508,23 +509,10 @@ class SyncApp:
     @wsgify
     def __call__(self, req):
         print("SyncApp.__call__() 处理HTTP请求 url: {}".format(req.path))
-        # Get and verify the session
-        try:
-            hkey = req.POST['k']
-        except KeyError:
-            hkey = None
-        if hkey is None:
-            try:
-                hkey = req.GET['k']
-            except KeyError:
-                hkey = None
-        session = self.session_manager.load(hkey, self.create_session)
-        if session is None:
-            try:
-                skey = req.POST['sk']
-                session = self.session_manager.load_from_skey(skey, self.create_session)
-            except KeyError:
-                skey = None
+        if req.path.startswith(self.base_url) is False and \
+                req.path.startswith(self.base_media_url) is False:
+            # 重定向到网站首页
+            return "Anki学霸"
         # 解码数据
         try:
             compression = int(req.POST['c'])
@@ -535,42 +523,35 @@ class SyncApp:
             data = self._decode_data(data, compression)
         except KeyError:
             data = {}
-        # 非媒体数据同步请求
+        # 登陆验证
+        if req.path == self.base_url + "hostKey":
+            result = self.operation_hostKey(data.get("u"), data.get("p"))
+            if result:
+                return json.dumps(result)
+            else:
+                raise HTTPForbidden('null')
+        # 已经登陆，验证session
+        hkey = None
+        if 'k' in req.POST:
+            hkey = req.POST['k']
+        if hkey is None and 'k' in req.GET:
+            hkey = req.GET['k']
+        session = self.session_manager.load(hkey, self.create_session)
+        if session is None and 'sk' in req.POST:
+            skey = req.POST['sk']
+            session = self.session_manager.load_from_skey(skey, self.create_session)
+        if session is None:
+            raise HTTPForbidden()
+
+        def validURL(u):
+            if u not in self.valid_urls:
+                raise HTTPNotFound()
+        # 处理非媒体数据同步请求
         if req.path.startswith(self.base_url):
             url = req.path[len(self.base_url):]
-            if url not in self.valid_urls:
-                raise HTTPNotFound()
-            if url == 'hostKey':
-                result = self.operation_hostKey(data.get("u"), data.get("p"))
-                if result:
-                    return json.dumps(result)
-                else:
-                    # TODO: do I have to pass 'null' for the client to receive None?
-                    raise HTTPForbidden('null')
-            if session is None:
-                raise HTTPForbidden()
-            if url in SyncCollectionHandler.operations + SyncMediaHandler.operations:
-                # 'meta' passes the SYNC_VER but it isn't used in the handler
-                if url == 'meta':
-                    if session.skey is None and 's' in req.POST:
-                        session.skey = req.POST['s']
-                    if 'v' in data:
-                        session.version = data['v']
-                    if 'cv' in data:
-                        session.client_version = data['cv']
-                    self.session_manager.save(hkey, session)
-                    session = self.session_manager.load(hkey, self.create_session)
-                thread = session.get_thread()
-                if url in self.prehooks:
-                    thread.execute(self.prehooks[url], [session])
-                result = self._execute_handler_method_in_thread(url, data, session)
-                # If it's a complex data type, we convert it to JSON
-                if type(result) not in (str, bytes, Response):
-                    result = json.dumps(result)
-                if url in self.posthooks:
-                    thread.execute(self.posthooks[url], [session])
-                return result
-            elif url == 'upload':
+            validURL(url)
+            # 上传
+            if url == "upload":
                 thread = session.get_thread()
                 if url in self.prehooks:
                     thread.execute(self.prehooks[url], [session])
@@ -578,8 +559,8 @@ class SyncApp:
                 if url in self.posthooks:
                     thread.execute(self.posthooks[url], [session])
                 return result
-
-            elif url == 'download':
+            # 下载
+            if url == "download":
                 # CollectionWrapper对象
                 thread = session.get_thread()
                 if url in self.prehooks:
@@ -588,16 +569,31 @@ class SyncApp:
                 if url in self.posthooks:
                     thread.execute(self.posthooks[url], [session])
                 return result
-
-            # This was one of our operations but it didn't get handled... Oops!
-            raise HTTPInternalServerError()
-        # 媒体数据同步请求
+            # 'meta' passes the SYNC_VER but it isn't used in the handler
+            if url == 'meta':
+                if session.skey is None and 's' in req.POST:
+                    session.skey = req.POST['s']
+                if 'v' in data:
+                    session.version = data['v']
+                if 'cv' in data:
+                    session.client_version = data['cv']
+                self.session_manager.save(hkey, session)
+                session = self.session_manager.load(hkey, self.create_session)
+            thread = session.get_thread()
+            if url in self.prehooks:
+                thread.execute(self.prehooks[url], [session])
+            # 调用/sync/xxx接口方法
+            result = self._execute_handler_method_in_thread(url, data, session)
+            # If it's a complex data type, we convert it to JSON
+            if type(result) not in (str, bytes, Response):
+                result = json.dumps(result)
+            if url in self.posthooks:
+                thread.execute(self.posthooks[url], [session])
+            return result
+        # 处理媒体数据同步请求
         elif req.path.startswith(self.base_media_url):
-            if session is None:
-                raise HTTPForbidden()
             url = req.path[len(self.base_media_url):]
-            if url not in self.valid_urls:
-                raise HTTPNotFound()
+            validURL(url)
             if url == "begin":
                 data['skey'] = session.skey
             result = self._execute_handler_method_in_thread(url, data, session)
