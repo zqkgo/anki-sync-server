@@ -229,26 +229,24 @@ class SyncMediaHandler:
         Adds and removes files to/from the database and media directory
         according to the data in zip file zipData.
         """
-
+        oldUsn = self.col.media.lastUsn()
         # Get meta info first.
         meta = json.loads(zip_file.read("_meta").decode())
         # Remove media files that were removed on the client.
         media_to_remove = []
-        print("被删除的文件保存在meta中，meta:{}".format(meta))
         for normname, ordinal in meta:
-            print("meta数据，normname: {}, ordinal: {}".format(normname, ordinal))
-            if ordinal == None or ordinal == "":
-                media_to_remove.append(self._normalize_filename(normname))
-
+            if ordinal is None or ordinal == "":
+                fname = self._normalize_filename(normname)
+                media_to_remove.append(fname)
+        # 删除文件的DB数据会导致usn增加
+        if media_to_remove:
+            self._remove_media_files(media_to_remove)
         # Add media files that were added on the client.
         media_to_add = []
         usn = self.col.media.lastUsn()
-        oldUsn = usn
-        print("zip_file.infolist() ----> {}".format(zip_file.infolist()))
         for i in zip_file.infolist():
             if i.filename == "_meta":  # Ignore previously retrieved metadata.
                 continue
-
             file_data = zip_file.read(i)
             csum = anki.utils.checksum(file_data)
             filename = self._normalize_filename(meta[int(i.filename)][0])
@@ -257,24 +255,16 @@ class SyncMediaHandler:
             # Save file to media directory.
             with open(file_path, 'wb') as f:
                 f.write(file_data)
-
             usn += 1
             media_to_add.append((filename, usn, csum))
-
         # We count all files we are to remove, even if we don't have them in
         # our media directory and our db doesn't know about them.
         processed_count = len(media_to_remove) + len(media_to_add)
-        print("len(meta): {}, processed_count: {}".format(len(meta), processed_count))
         assert len(meta) == processed_count  # sanity check
-
-        if media_to_remove:
-            self._remove_media_files(media_to_remove)
-
         if media_to_add:
             self.col.media.db.executemany(
                 "INSERT OR REPLACE INTO media VALUES (?,?,?)", media_to_add)
             self.col.media.db.commit()
-
         assert self.col.media.lastUsn() == oldUsn + processed_count  # TODO: move to some unit test
         return processed_count
 
@@ -342,11 +332,12 @@ class SyncMediaHandler:
         return {'data': result, 'err': ''}
 
     def mediaSanity(self, local=None):
+        print("SyncMediaHandler.mediaSanity() 媒体文件合法性检查")
+        print(self.col.media.mediaCount(), local)
         if self.col.media.mediaCount() == local:
             result = "OK"
         else:
             result = "FAILED"
-
         return {'data': result, 'err': ''}
 
 
@@ -610,8 +601,10 @@ class SyncApp:
         thread for session. The handler method will access the collection as
         self.col.
         """
-        print("SyncApp._execute_handler_method_in_thread() 准备执行线程中的某个方法, method_mame: {}. keyword_args: {}, "
-              "session: {}".format(method_name, keyword_args, session))
+        # print("SyncApp._execute_handler_method_in_thread() 准备执行线程中的某个方法, method_mame: {}. keyword_args: {}, "
+        #       "session: {}".format(method_name, keyword_args, session))
+        print("SyncApp._execute_handler_method_in_thread() 准备执行线程中的某个方法, method_mame: {}, "
+              "session: {}".format(method_name, session))
 
         def run_func(col, **keyword_args):
             # Retrieve the correct handler method.
@@ -628,6 +621,7 @@ class SyncApp:
         # Send the closure to the thread for execution.
         thread = session.get_thread()
         result = thread.execute(run_func, kw=keyword_args)
+        print("响应数据：{}".format(result))
         print("-"*100)
         return result
 

@@ -60,8 +60,15 @@ class ServerMediaManager:
         fpath = os.path.join(self.dir(), fname)
         if os.path.exists(fpath):
             os.remove(fpath)
+        # 每删除一个文件就将其在DB中的usn更新为max+1
+        # self.db.execute(
+        #     "UPDATE media SET csum = NULL, usn = ? WHERE fname = ?",
+        #     self.lastUsn() + 1,
+        #     fname,
+        # )
+        top = self.lastUsn() + 1
         self.db.execute(
-            "UPDATE media SET csum = NULL, usn = ? WHERE fname = ?",
-            self.lastUsn() + 1,
-            fname,
+            "INSERT INTO media(fname,usn,csum) VALUES(?,?,NULL) ON CONFLICT(fname) DO UPDATE SET usn=?",
+            fname, top, top
         )
+
