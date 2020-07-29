@@ -57,6 +57,7 @@ class ServerMediaManager:
         return self.db.first("SELECT csum, 0 FROM media WHERE fname=?", fname)
 
     def syncDelete(self, fname):
+        print("ServerMediaManager.syncDelete() 删除媒体文件并更新媒体数据库")
         fpath = os.path.join(self.dir(), fname)
         if os.path.exists(fpath):
             os.remove(fpath)
@@ -67,6 +68,8 @@ class ServerMediaManager:
         #     fname,
         # )
         top = self.lastUsn() + 1
+        # 如果没有被删除文件的数据就新增
+        # 如果有被删除文件的数据则更新
         self.db.execute(
             "INSERT INTO media(fname,usn,csum) VALUES(?,?,NULL) ON CONFLICT(fname) DO UPDATE SET usn=?",
             fname, top, top
