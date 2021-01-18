@@ -19,7 +19,6 @@ def addui(self, _):
 	parent_l.addWidget(self.useCustomServer)
 	cshl = QHBoxLayout()
 	parent_l.addLayout(cshl)
-
 	self.serverAddrLabel = QLabel(parent_w)
 	self.serverAddrLabel.setText("Server address")
 	cshl.addWidget(self.serverAddrLabel)
@@ -55,6 +54,7 @@ def updateui(self, state):
 	self.customServerAddr.setEnabled(state == Qt.Checked)
 
 def setserver():
+	print("插件Server：__ini__.py.setserver() 设置自定义服务器")
 	pconfig = getprofileconfig()
 	if pconfig['enabled']:
 		aqt.mw.pm.profile['hostNum'] = None

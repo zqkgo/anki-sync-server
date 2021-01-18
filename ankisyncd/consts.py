@@ -1,0 +1,7 @@
+SYNC_MAX_BYTES = int(2.5 * 1024 * 1024)
+SYNC_MAX_FILES = 25
+
+# removal types
+REM_CARD = 0
+REM_NOTE = 1
+REM_DECK = 2

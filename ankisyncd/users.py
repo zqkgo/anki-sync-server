@@ -147,7 +147,7 @@ class SqliteUserManager(SimpleUserManager):
 
     def authenticate(self, username, password):
         """Returns True if this username is allowed to connect with this password. False otherwise."""
-
+        print("SqliteUserManager.authenticate() 验证用户名密码")
         conn = self._conn()
         cursor = conn.cursor()
         param = (username,)

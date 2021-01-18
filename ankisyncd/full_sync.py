@@ -3,7 +3,8 @@
 import os
 from sqlite3 import dbapi2 as sqlite
 import logging
-import anki.db
+from ankisyncd.db import DB
+from webob.exc import HTTPBadRequest
 from ankisyncd.collection import CollectionWrapper
 
 logger = logging.getLogger("ankisyncd.full_sync")
@@ -12,12 +13,13 @@ class FullSyncManager:
     def upload(self, col, data, session):
         # Verify integrity of the received database file before replacing our
         # existing db.
+        print("FullSyncManager.upload() 完全上传")
         temp_db_path = session.get_collection_path() + ".tmp"
         with open(temp_db_path, 'wb') as f:
             f.write(data)
 
         try:
-            with anki.db.DB(temp_db_path) as test_db:
+            with DB(temp_db_path) as test_db:
                 if test_db.scalar("pragma integrity_check") != "ok":
                     raise HTTPBadRequest("Integrity check failed for uploaded "
                                          "collection database file.")

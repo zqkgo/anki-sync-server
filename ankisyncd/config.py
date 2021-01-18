@@ -26,6 +26,7 @@ def load_from_env(conf):
             conf[config_key] = os.getenv(env)
             logger.info("Setting {} from ENV".format(config_key))
 
+
 def load(path=None):
     print("config.py.load() 加载配置")
     choices = paths
@@ -39,6 +40,7 @@ def load(path=None):
             conf = parser['sync_app']
             logger.info("Loaded config from {}".format(path))
             load_from_env(conf)
+            # 找到第一个可用的配置则返回
             return conf
         except KeyError:
             pass

@@ -16,7 +16,6 @@
 
 import sys
 import json
-import hashlib
 import re
 import gzip
 import io
@@ -26,20 +25,26 @@ import random
 import time
 import unicodedata
 import zipfile
+import ssl
 
 from webob import Response
 
-import anki.db
+# import anki.db
 import anki.sync
-import anki.utils
-from anki.consts import REM_CARD, REM_NOTE
-from anki.consts import SYNC_VER, SYNC_ZIP_SIZE, SYNC_ZIP_COUNT
+# import anki.utils
+
+# from anki.consts import REM_CARD, REM_NOTE
+# from anki.consts import SYNC_VER
 from webob.dec import wsgify
 from webob.exc import *
 
 from ankisyncd.full_sync import get_full_sync_manager
 from ankisyncd.sessions import get_session_manager
 from ankisyncd.users import get_user_manager
+from ankisyncd.utils import *
+from ankisyncd.consts import *
+
+from wsgiref.simple_server import make_server, WSGIRequestHandler
 
 logger = logging.getLogger("ankisyncd")
 
@@ -50,56 +55,57 @@ class SyncCollectionHandler(anki.sync.Syncer):
     def __init__(self, col):
         # So that 'server' (the 3rd argument) can't get set
         anki.sync.Syncer.__init__(self, col)
+        self.name = "[Server Syncer]"
 
     @staticmethod
     def _old_client(cv):
         if not cv:
             return False
-
         note = {"alpha": 0, "beta": 0, "rc": 0}
         client, version, platform = cv.split(',')
-
-        for name in note.keys():
-            if name in version:
-                vs = version.split(name)
+        for t in note.keys():
+            # 如果版本是2.13.1alpha10， version=2.13.1，note["alpha"]=10
+            if t in version:
+                vs = version.split(t)
                 version = vs[0]
-                note[name] = int(vs[-1])
-
+                note[t] = int(vs[-1])
         # convert the version string, ignoring non-numeric suffixes like in beta versions of Anki
-        version_nosuffix = re.sub(r'[^0-9.].*$', '', version)
-        version_int = [int(x) for x in version_nosuffix.split('.')]
-
+        # 类似2.13.1alpha10，会被去掉非数字的后缀，变成2.13.1
+        version_no_suffix = re.sub(r'[^0-9.].*$', '', version)
+        version_int = [int(x) for x in version_no_suffix.split('.')]
         if client == 'ankidesktop':
+            # 2.0.27版本以下属于旧版本
             return version_int < [2, 0, 27]
         elif client == 'ankidroid':
             if version_int == [2, 3]:
-               if note["alpha"]:
-                  return note["alpha"] < 4
+                if note["alpha"]:
+                    return note["alpha"] < 4
             else:
-               return version_int < [2, 2, 3]
+                # 2.2.3版本以下属于旧版本
+                return version_int < [2, 2, 3]
         else:  # unknown client, assume current version
             return False
 
     def meta(self, v=None, cv=None):
+        print("SyncCollectionHandler.meta() 获取元信息，同步协议版本：{}， 客户端版本：{}".format(v, cv))
         if self._old_client(cv):
             return Response(status=501)  # client needs upgrade
-        if v > SYNC_VER:
-            return {"cont": False, "msg": "Your client is using unsupported sync protocol ({}, supported version: {})".format(v, SYNC_VER)}
+        # if v > SYNC_VER:
+        #     return {"cont": False, "msg": "Your client is using unsupported sync protocol ({}, supported version: {})".format(v, SYNC_VER)}
         if v < 9 and self.col.schedVer() >= 2:
             return {"cont": False, "msg": "Your client doesn't support the v{} scheduler.".format(self.col.schedVer())}
-
         # Make sure the media database is open!
         if self.col.media.db is None:
             self.col.media.connect()
-
         return {
             'scm': self.col.scm,
-            'ts': anki.utils.intTime(),
+            'ts': intTime(),
             'mod': self.col.mod,
             'usn': self.col._usn,
             'musn': self.col.media.lastUsn(),
             'msg': '',
             'cont': True,
+            'hostNum': 0,
         }
 
     def usnLim(self):
@@ -113,14 +119,18 @@ class SyncCollectionHandler(anki.sync.Syncer):
         # if offset is not None:
         #     raise NotImplementedError('You are using the experimental V2 scheduler, which is not supported by the server.')
         # minUsn - 客户端usn
-        # maxUsn - 服务端us
+        # maxUsn - 服务端usn
         # minUsn <= maxUsn
+        # 获取服务端chunk的时候使用到此属性
         self.maxUsn = self.col._usn
-        print("▶ 开始执行start方法，maxUsn: {}, minUsn: {}, lnewer: {}, graves: {}".format(self.maxUsn, minUsn, lnewer, graves))
+        print(
+            "▶ 开始执行start方法，maxUsn: {}, minUsn: {}, lnewer: {}, graves: {}".format(self.maxUsn, minUsn, lnewer, graves))
         # 客户端入参minUsn，来自最近一次调用服务端/sync/meta接口返回的meta[usn]
         # 这个值不可能大于服务端usn，因为有可能其他客户端已经同步过数据，即增加过maxUsn
         self.minUsn = minUsn
+        # 哪边更加新，就使用哪边的model deck tag对象信息 conf配置信息
         self.lnewer = not lnewer
+        # 找到被超前与当前客户端的其他客户端删除的对象
         lgraves = self.removed()
         self.remove(graves)
         return lgraves
@@ -129,21 +139,27 @@ class SyncCollectionHandler(anki.sync.Syncer):
         self.remove(chunk)
 
     def applyChanges(self, changes):
+        # 客户端model deck tag元信息 全局conf配置
+        # 如果model非空，表示客户端的model云信息发生了变化
+        # 其他对象同理
         self.rchg = changes
+        # 服务端配置
         lchg = self.changes()
         # merge our side before returning
+        # 将客户端发生变化的元信息或配置合并到服务端
         self.mergeChanges(lchg, self.rchg)
         return lchg
 
     def sanityCheck2(self, client):
         server = self.sanityCheck()
         print("client: {}, server: {}".format(client, server))
+        # 客户端和服务端的验证结果如果不同则不允许通过
         if client != server:
             return dict(status="bad", c=client, s=server)
         return dict(status="ok")
 
     def finish(self, mod=None):
-        return anki.sync.Syncer.finish(self, anki.utils.intTime(1000))
+        return anki.sync.Syncer.finish(self, intTime(1000))
 
     # This function had to be put here in its entirety because Syncer.removed()
     # doesn't use self.usnLim() (which we override in this class) in queries.
@@ -152,7 +168,8 @@ class SyncCollectionHandler(anki.sync.Syncer):
         cards = []
         notes = []
         decks = []
-
+        # 找到超前于当前客户端的其他客户端
+        # 删除的对象
         curs = self.col.db.execute(
             "select oid, type from graves where usn >= ?", self.minUsn)
 
@@ -178,6 +195,7 @@ class SyncCollectionHandler(anki.sync.Syncer):
     def getTags(self):
         return [t for t, usn in self.col.tags.allItems()
                 if usn >= self.minUsn]
+
 
 class SyncMediaHandler:
     operations = ['begin', 'mediaChanges', 'mediaSanity', 'uploadChanges', 'downloadFiles']
@@ -211,7 +229,7 @@ class SyncMediaHandler:
 
     @staticmethod
     def _check_zip_data(zip_file):
-        max_zip_size = 100*1024*1024
+        max_zip_size = 100 * 1024 * 1024
         max_meta_file_size = 100000
 
         meta_file_size = zip_file.getinfo("_meta").file_size
@@ -248,7 +266,7 @@ class SyncMediaHandler:
             if i.filename == "_meta":  # Ignore previously retrieved metadata.
                 continue
             file_data = zip_file.read(i)
-            csum = anki.utils.checksum(file_data)
+            csum = checksum(file_data)
             filename = self._normalize_filename(meta[int(i.filename)][0])
             file_path = os.path.join(self.col.media.dir(), filename)
 
@@ -276,7 +294,7 @@ class SyncMediaHandler:
         """
 
         # Normalize name for platform.
-        if anki.utils.isMac:  # global
+        if isMac:  # global
             filename = unicodedata.normalize("NFD", filename)
         else:
             filename = unicodedata.normalize("NFC", filename)
@@ -295,7 +313,7 @@ class SyncMediaHandler:
                 self.col.media.db.commit()
             except OSError as err:
                 logger.error("Error when removing file '%s' from media dir: "
-                              "%s" % (filename, str(err)))
+                             "%s" % (filename, str(err)))
 
     def downloadFiles(self, files):
         flist = {}
@@ -305,24 +323,23 @@ class SyncMediaHandler:
 
         with zipfile.ZipFile(f, "w", compression=zipfile.ZIP_DEFLATED) as z:
             for fname in files:
-                z.write(os.path.join(self.col.media.dir(), fname), str(cnt))
+                fpath = os.path.join(self.col.media.dir(), fname)
+                z.write(fpath, str(cnt))
                 flist[str(cnt)] = fname
                 sz += os.path.getsize(os.path.join(self.col.media.dir(), fname))
-                if sz > SYNC_ZIP_SIZE or cnt > SYNC_ZIP_COUNT:
+                if sz > SYNC_MAX_BYTES or cnt > SYNC_MAX_FILES:
                     break
                 cnt += 1
-
             z.writestr("_meta", json.dumps(flist))
-
         return f.getvalue()
 
     def mediaChanges(self, lastUsn):
         result = []
         server_lastUsn = self.col.media.lastUsn()
         fname = csum = None
-        print("server last usn: {}, client usn: {}".format(server_lastUsn, lastUsn))
         if lastUsn < server_lastUsn or lastUsn == 0:
-            for fname,usn,csum, in self.col.media.db.execute("select fname,usn,csum from media order by usn desc limit ?", server_lastUsn - lastUsn):
+            sql = "select fname,usn,csum from media order by usn desc limit ?"
+            for fname, usn, csum, in self.col.media.db.execute(sql, server_lastUsn - lastUsn):
                 result.append([fname, usn, csum])
 
         # anki assumes server_lastUsn == result[-1][1]
@@ -333,7 +350,7 @@ class SyncMediaHandler:
 
     def mediaSanity(self, local=None):
         print("SyncMediaHandler.mediaSanity() 媒体文件合法性检查")
-        print(self.col.media.mediaCount(), local)
+        print("服务端媒体usn：{}, 客户端媒体usn：{}".format(self.col.media.mediaCount(), local))
         if self.col.media.mediaCount() == local:
             result = "OK"
         else:
@@ -360,7 +377,7 @@ class SyncUserSession:
 
     def _generate_session_key(self):
         print("SyncUserSession._generate_session_key() 生成随机的session key")
-        return anki.utils.checksum(str(random.random()))[:8]
+        return checksum(str(random.random()))[:8]
 
     def get_collection_path(self):
         return os.path.realpath(os.path.join(self.path, 'collection.anki2'))
@@ -393,8 +410,8 @@ class SyncApp:
         from ankisyncd.thread import get_collection_manager
 
         self.data_root = os.path.abspath(config['data_root'])
-        self.base_url  = config['base_url']
-        self.base_media_url  = config['base_media_url']
+        self.base_url = config['base_url']
+        self.base_media_url = config['base_media_url']
         self.setup_new_collection = None
 
         self.prehooks = {}
@@ -474,6 +491,7 @@ class SyncApp:
         return data
 
     def operation_hostKey(self, username, password):
+        print("SyncApp.operation_hostKey() 用户身份验证")
         if not self.user_manager.authenticate(username, password):
             return
         dirname = self.user_manager.userdir(username)
@@ -499,7 +517,7 @@ class SyncApp:
 
     @wsgify
     def __call__(self, req):
-        print("SyncApp.__call__() 处理HTTP请求 url: {}".format(req.path))
+        print("SyncApp.__call__() 处理HTTP请求 url: {}， POST数据：{}".format(req.path, req.POST))
         if req.path.startswith(self.base_url) is False and \
                 req.path.startswith(self.base_media_url) is False:
             # 重定向到网站首页
@@ -521,6 +539,7 @@ class SyncApp:
                 return json.dumps(result)
             else:
                 raise HTTPForbidden('null')
+        print("登陆验证通过")
         # 已经登陆，验证session
         hkey = None
         if 'k' in req.POST:
@@ -537,6 +556,7 @@ class SyncApp:
         def validURL(u):
             if u not in self.valid_urls:
                 raise HTTPNotFound()
+
         # 处理非媒体数据同步请求
         if req.path.startswith(self.base_url):
             url = req.path[len(self.base_url):]
@@ -568,6 +588,7 @@ class SyncApp:
                     session.version = data['v']
                 if 'cv' in data:
                     session.client_version = data['cv']
+                # 保存可能已被更新的session
                 self.session_manager.save(hkey, session)
                 session = self.session_manager.load(hkey, self.create_session)
             thread = session.get_thread()
@@ -621,31 +642,30 @@ class SyncApp:
         # Send the closure to the thread for execution.
         thread = session.get_thread()
         result = thread.execute(run_func, kw=keyword_args)
-        print("响应数据：{}".format(result))
-        print("-"*100)
+        # print("响应数据：{}".format(result))
+        print("-" * 100)
         return result
 
 
 def make_app(global_conf, **local_conf):
     return SyncApp(**local_conf)
 
+
+
+class RequestHandler(WSGIRequestHandler):
+    logger = logging.getLogger("ankisyncd.http")
+
+    def log_error(self, format, *args):
+        self.logger.error("%s %s", self.address_string(), format % args)
+
+    def log_message(self, format, *args):
+        self.logger.info("%s %s", self.address_string(), format % args)
+
 def main():
-    print("sync_app.py.main() 程序入口")
     import ankisyncd
     logging.basicConfig(level=logging.ERROR, format="[%(asctime)s]:%(levelname)s:%(name)s:%(message)s")
-    logger.info("ankisyncd {} ({})".format(ankisyncd._get_version(), ankisyncd._homepage))
-    from wsgiref.simple_server import make_server, WSGIRequestHandler
     from ankisyncd.thread import shutdown
     import ankisyncd.config
-
-    class RequestHandler(WSGIRequestHandler):
-        logger = logging.getLogger("ankisyncd.http")
-
-        def log_error(self, format, *args):
-            self.logger.error("%s %s", self.address_string(), format%args)
-
-        def log_message(self, format, *args):
-            self.logger.info("%s %s", self.address_string(), format%args)
 
     if len(sys.argv) > 1:
         # backwards compat
@@ -655,7 +675,6 @@ def main():
 
     ankiserver = SyncApp(config)
     httpd = make_server(config['host'], int(config['port']), ankiserver, handler_class=RequestHandler)
-
     try:
         logger.info("Serving HTTP on {} port {}...".format(*httpd.server_address))
         httpd.serve_forever()
