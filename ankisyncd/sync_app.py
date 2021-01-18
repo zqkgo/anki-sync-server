@@ -651,7 +651,6 @@ def make_app(global_conf, **local_conf):
     return SyncApp(**local_conf)
 
 
-
 class RequestHandler(WSGIRequestHandler):
     logger = logging.getLogger("ankisyncd.http")
 
@@ -660,6 +659,7 @@ class RequestHandler(WSGIRequestHandler):
 
     def log_message(self, format, *args):
         self.logger.info("%s %s", self.address_string(), format % args)
+
 
 def main():
     import ankisyncd
@@ -682,7 +682,3 @@ def main():
         logger.info("Exiting...")
     finally:
         shutdown()
-
-
-if __name__ == '__main__':
-    main()
