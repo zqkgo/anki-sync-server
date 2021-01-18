@@ -664,21 +664,15 @@ class RequestHandler(WSGIRequestHandler):
 def main():
     import ankisyncd
     logging.basicConfig(level=logging.ERROR, format="[%(asctime)s]:%(levelname)s:%(name)s:%(message)s")
-    from ankisyncd.thread import shutdown
     import ankisyncd.config
-
-    if len(sys.argv) > 1:
-        # backwards compat
-        config = ankisyncd.config.load(sys.argv[1])
-    else:
-        config = ankisyncd.config.load()
-
-    ankiserver = SyncApp(config)
-    httpd = make_server(config['host'], int(config['port']), ankiserver, handler_class=RequestHandler)
+    config = ankisyncd.config.load()
+    host, port, app = config['host'], int(config['port']),SyncApp(config)
+    httpd = make_server(host, port, app, handler_class=RequestHandler)
     try:
         logger.info("Serving HTTP on {} port {}...".format(*httpd.server_address))
         httpd.serve_forever()
     except KeyboardInterrupt:
         logger.info("Exiting...")
     finally:
+        from ankisyncd.thread import shutdown
         shutdown()
